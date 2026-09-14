@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Camada mais interna: entidades, regras de negocio e contratos de persistencia.
+    Nao referencia nenhum outro projeto nem nenhum pacote NuGet de proposito.
+  -->
+
+</Project>

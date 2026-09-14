@@ -1,0 +1,27 @@
+# SQL Server em container, para quem nao usa o LocalDB do Windows.
+# Depois de "docker compose up -d", aponte a API para ele exportando:
+#   ConnectionStrings__DefaultConnection="Server=localhost,1433;Database=PortfolioDb;User Id=sa;Password=Portfolio@2026;TrustServerCertificate=True"
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: portfolio-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Portfolio@2026"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - portfolio-sqldata:/var/opt/mssql
+    healthcheck:
+      # A API sobe e aplica as migrations sozinha; o healthcheck evita que ela
+      # tente conectar antes de o SQL Server aceitar login.
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  portfolio-sqldata:

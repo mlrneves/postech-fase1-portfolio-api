@@ -1,0 +1,201 @@
+# Requisicoes na ordem da demonstracao.
+# Funciona no Visual Studio e no VS Code com a extensao REST Client.
+# Depois do passo 2, copie o accessToken da resposta para a variavel @token.
+
+@baseUrl = http://localhost:5080
+@token = COLE_AQUI_O_accessToken_DO_PASSO_2
+@investmentId = COLE_AQUI_O_id_DO_PASSO_5
+@assetClassId = 6
+
+### 1) Cadastrar o investidor -> 201
+POST {{baseUrl}}/users
+Content-Type: application/json
+
+{
+  "fullName": "Marcio Rodrigues",
+  "email": "marcio@exemplo.com",
+  "password": "Senha@12345"
+}
+
+### 2) Autenticar -> 200 com o accessToken
+POST {{baseUrl}}/auth
+Content-Type: application/json
+
+{
+  "email": "marcio@exemplo.com",
+  "password": "Senha@12345"
+}
+
+### 3) Listar aportes SEM o token -> 401
+GET {{baseUrl}}/investments
+
+### 4) Conferir de quem e o token -> 200
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{token}}
+
+### 5) Registrar um aporte -> 201 (guarde o id)
+POST {{baseUrl}}/investments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "Ações",
+  "amount": 1500.75,
+  "investedOn": "2026-09-01",
+  "institution": "XP",
+  "notes": "PETR4"
+}
+
+### 6) Registrar outro aporte, em outra classe -> 201
+POST {{baseUrl}}/investments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "tesouro direto",
+  "amount": 500,
+  "investedOn": "2026-08-10",
+  "institution": "Tesouro Direto"
+}
+
+### 7) Listar os aportes do investidor autenticado -> 200
+GET {{baseUrl}}/investments
+Authorization: Bearer {{token}}
+
+### 8) Resumo da carteira: total e participacao por classe -> 200
+GET {{baseUrl}}/investments/summary
+Authorization: Bearer {{token}}
+
+### 9) Obter um aporte pelo id -> 200
+GET {{baseUrl}}/investments/{{investmentId}}
+Authorization: Bearer {{token}}
+
+### 10) Alterar o aporte -> 200 (repare no changedAt)
+PUT {{baseUrl}}/investments/{{investmentId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "Renda Fixa",
+  "amount": 3000,
+  "investedOn": "2026-07-15",
+  "institution": "Nubank",
+  "notes": "CDB 110% do CDI"
+}
+
+### 11) Remover o aporte -> 204
+DELETE {{baseUrl}}/investments/{{investmentId}}
+Authorization: Bearer {{token}}
+
+### 12) Remover de novo o mesmo aporte -> 404
+DELETE {{baseUrl}}/investments/{{investmentId}}
+Authorization: Bearer {{token}}
+
+### 13) Aporte sem a data -> 400
+POST {{baseUrl}}/investments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "Ações",
+  "amount": 100
+}
+
+### 14) Aporte com data futura -> 400
+POST {{baseUrl}}/investments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "Ações",
+  "amount": 100,
+  "investedOn": "2030-01-01"
+}
+
+### 15) Aporte em uma classe que nao existe -> 400 listando as disponiveis
+POST {{baseUrl}}/investments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "Previdência",
+  "amount": 100,
+  "investedOn": "2026-05-05"
+}
+
+### 16) Listar as classes de ativo (note o investmentCount) -> 200
+GET {{baseUrl}}/asset-classes
+Authorization: Bearer {{token}}
+
+### 17) Cadastrar uma classe de ativo -> 201 (guarde o id em @assetClassId)
+POST {{baseUrl}}/asset-classes
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Previdência Privada"
+}
+
+### 18) Cadastrar a mesma classe sem acento -> 409
+POST {{baseUrl}}/asset-classes
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "previdencia privada"
+}
+
+### 19) Usar a classe nova em um aporte -> 201
+POST {{baseUrl}}/investments
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "assetClass": "PREVIDENCIA PRIVADA",
+  "amount": 800,
+  "investedOn": "2026-06-01"
+}
+
+### 20) Remover a classe que agora esta em uso -> 409
+DELETE {{baseUrl}}/asset-classes/{{assetClassId}}
+Authorization: Bearer {{token}}
+
+### 21) Renomear a classe -> 200
+PUT {{baseUrl}}/asset-classes/{{assetClassId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Previdência"
+}
+
+### 22) Cadastrar o mesmo e-mail duas vezes -> 409
+POST {{baseUrl}}/users
+Content-Type: application/json
+
+{
+  "fullName": "Outro Alguem",
+  "email": "marcio@exemplo.com",
+  "password": "Senha@54321"
+}
+
+### 23) Autenticar com a senha errada -> 401
+POST {{baseUrl}}/auth
+Content-Type: application/json
+
+{
+  "email": "marcio@exemplo.com",
+  "password": "senha-errada"
+}
+
+### 24) Limite de tentativas: repita esta chamada mais de dez vezes seguidas -> 429 com Retry-After
+POST {{baseUrl}}/auth
+Content-Type: application/json
+
+{
+  "email": "marcio@exemplo.com",
+  "password": "senha-errada"
+}
+
+### 25) Sonda de saude (sem token) -> 200 com o estado da aplicacao e do banco
+GET {{baseUrl}}/health
