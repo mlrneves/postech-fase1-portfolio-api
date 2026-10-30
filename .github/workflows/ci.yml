@@ -1,0 +1,116 @@
+# Integracao continua: compila, testa e gera o artefato de deploy (imagem Docker
+# no GitHub Container Registry) a cada mudanca. O CD (cd.yml) e disparado
+# automaticamente quando este workflow termina com sucesso na main.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  CONFIGURATION: Release
+  # Versao do build: 1.0.<numero do run>, gravada na DLL e na tag da imagem.
+  APP_VERSION: 1.0.${{ github.run_number }}
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/portfolio-api
+
+jobs:
+  build-and-test:
+    name: Build e testes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write # o relatorio de testes publica um "check" no commit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET SDK 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restaurar pacotes
+        run: dotnet restore Portfolio.sln
+
+      - name: Compilar
+        run: >
+          dotnet build Portfolio.sln --configuration $CONFIGURATION --no-restore
+          -p:Version=$APP_VERSION
+          -p:InformationalVersion=$APP_VERSION+${{ github.sha }}
+
+      - name: Executar testes
+        # Unit + integracao (InMemory): nenhum deles precisa de SQL Server.
+        run: >
+          dotnet test Portfolio.sln --configuration $CONFIGURATION --no-build
+          --logger "trx" --results-directory TestResults
+
+      - name: Relatorio de testes
+        uses: dorny/test-reporter@v1
+        if: ${{ !cancelled() }}
+        with:
+          name: Resultado dos testes
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+
+      - name: Guardar resultados brutos (.trx)
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-results
+          path: TestResults
+
+  build-image:
+    name: Artefato (imagem Docker)
+    # So depois de compilar e testar; um teste vermelho nao vira imagem.
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # para publicar no GHCR
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GitHub Container Registry
+        # Em pull request a imagem e construida, mas nao publicada.
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags e labels da imagem
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.APP_VERSION }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha
+
+      - name: Build e push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            GIT_SHA=${{ github.sha }}
+
+      - name: Resumo
+        run: |
+          echo "### Artefato publicado" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

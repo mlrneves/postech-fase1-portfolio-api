@@ -1,0 +1,15 @@
+# Nada disso precisa ir para o contexto do docker build.
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/TestResults/
+.git/
+.github/
+deploy/
+tests/
+*.md
+*.user
+docker-compose*.yml
+Dockerfile
+.dockerignore

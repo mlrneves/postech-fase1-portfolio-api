@@ -1,5 +1,8 @@
 # Portfolio API
 
+[![CI](https://github.com/mlrneves/postech-fase1-portfolio-api/actions/workflows/ci.yml/badge.svg)](https://github.com/mlrneves/postech-fase1-portfolio-api/actions/workflows/ci.yml)
+[![CD](https://github.com/mlrneves/postech-fase1-portfolio-api/actions/workflows/cd.yml/badge.svg)](https://github.com/mlrneves/postech-fase1-portfolio-api/actions/workflows/cd.yml)
+
 API REST para acompanhar uma carteira de investimentos pessoal. Cada pessoa se
 cadastra, autentica, recebe um token e a partir daí registra, consulta, altera e
 apaga os próprios aportes — e só os próprios.
@@ -7,10 +10,12 @@ apaga os próprios aportes — e só os próprios.
 Foi escrita como entrega da atividade substitutiva da Fase 1 da pós em
 Arquitetura de Sistemas .NET com Azure (POSTECH). O enunciado pedia uma API em
 .NET conectada a um banco SQL Server, com um endpoint de autenticação e os demais
-endpoints protegidos por ele.
+endpoints protegidos por ele. A Fase 2 acrescentou a esteira de CI/CD com GitHub
+Actions, a imagem Docker como artefato e o deploy automático em containers — está
+na seção [CI/CD](#cicd).
 
-**Stack:** .NET 8 · ASP.NET Core · Entity Framework Core 8 · SQL Server · JWT ·
-BCrypt · xUnit
+**Stack:** .NET 10 · ASP.NET Core · Entity Framework Core 10 · SQL Server · JWT ·
+BCrypt · xUnit · Docker · GitHub Actions
 
 ---
 
@@ -26,6 +31,7 @@ BCrypt · xUnit
 - [Erros](#erros)
 - [Testes](#testes)
 - [Configuração](#configuração)
+- [CI/CD](#cicd)
 - [Roteiro do vídeo de demonstração](#roteiro-do-vídeo-de-demonstração)
 - [Quando algo não funciona](#quando-algo-não-funciona)
 - [Onde cada assunto da fase aparece no código](#onde-cada-assunto-da-fase-aparece-no-código)
@@ -207,11 +213,13 @@ faz um `{"amout": 100}` devolver 400 em vez de gravar o aporte com valor zero.
 
 | Item | Versão | Como conferir |
 |------|--------|---------------|
-| SDK do .NET | 8.0 ou superior | `dotnet --version` |
+| SDK do .NET | 10.0 | `dotnet --version` |
 | SQL Server | LocalDB, Express, Developer ou container | ver passo 2 |
 
-SDKs mais novos (9 ou 10) servem: os projetos têm `net8.0` como alvo e o SDK
-compila normalmente para essa versão.
+Os projetos têm `net10.0` como alvo (a Fase 1 foi entregue em .NET 8 e migrada
+na Fase 2, junto com a esteira). Quem não quiser instalar o SDK pode rodar tudo
+pelo Docker: `docker compose up -d --build` sobe a API e o SQL Server (ver
+[Rodando](#rodando)).
 
 Para gerar migrations também é preciso a ferramenta do EF Core, uma vez por
 máquina:
@@ -223,7 +231,7 @@ dotnet tool install --global dotnet-ef --version 8.*
 Se ela já estiver instalada em uma versão antiga:
 
 ```bash
-dotnet tool update --global dotnet-ef --version 8.*
+dotnet tool update --global dotnet-ef --version 10.*
 ```
 
 ### 2. Escolha o banco
@@ -248,10 +256,11 @@ Nada mais a fazer: a connection string do `appsettings.json` já aponta para
 **Opção B — SQL Server em container.**
 
 ```bash
-docker compose up -d
+docker compose up -d sqlserver
 ```
 
-Espere o healthcheck ficar `healthy` (`docker compose ps`) e então aponte a API
+(Só o serviço `sqlserver`; sem o nome, o compose sobe também a API em container —
+veja [Rodando](#rodando).) Espere o healthcheck ficar `healthy` (`docker compose ps`) e então aponte a API
 para o container por variável de ambiente. No PowerShell:
 
 ```powershell
@@ -315,6 +324,27 @@ Enquanto a API roda, o terminal mostra uma linha por requisição:
 ```
 
 Requisições acima de 1 segundo saem como `warn`, para aparecerem na triagem.
+
+### Tudo em container
+
+Sem SDK nem SQL Server instalados — só Docker:
+
+```bash
+docker compose up -d --build
+```
+
+O compose constrói a imagem da API pelo [`Dockerfile`](Dockerfile) (multi-stage:
+SDK só no estágio de build, imagem final com o runtime do ASP.NET Core), sobe o
+SQL Server, espera o healthcheck dele e então sobe a API, que aplica as migrations
+sozinha. Mesma porta: **http://localhost:5080/swagger**. Para acompanhar:
+
+```bash
+docker compose logs -f api
+```
+
+`docker compose down` para tudo; `docker compose down -v` também apaga o volume
+do banco. É esse mesmo arquivo que o CD usa em produção, trocando a construção
+local pela imagem publicada pelo CI (variável `API_IMAGE`).
 
 ---
 
@@ -688,6 +718,123 @@ aplicação faz sozinha ao subir.
 
 ---
 
+## CI/CD
+
+Entrega da Fase 2. A esteira é feita com **GitHub Actions** em dois workflows.
+O artefato de deploy é uma **imagem Docker** publicada no GitHub Container
+Registry (GHCR), e o ambiente de produção é o **Docker da máquina local**,
+alimentado por um runner self-hosted — uma das três opções que o enunciado admite
+("Azure, outra cloud ou a sua máquina"). A mesma imagem subiria sem mudança em
+qualquer serviço de containers (Azure Container Apps, App Service for
+Containers), bastando trocar o passo de deploy.
+
+```
+push na main ──► CI (ubuntu-latest)                         ──► CD (runner self-hosted, Windows)
+                 job 1: restore → build → test                  docker pull ghcr.io/.../portfolio-api:1.0.N
+                 job 2: docker build → push no GHCR             docker compose up -d (API + SQL Server)
+                 artefato: ghcr.io/mlrneves/portfolio-api:1.0.N smoke test em GET /health
+```
+
+### O workflow de CI — [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+
+Dispara em todo push e pull request para `main` (e manualmente, por
+*workflow_dispatch*). Roda em runners Linux hospedados pelo GitHub, em dois jobs
+encadeados:
+
+**Job `build-and-test`**
+
+1. `dotnet restore` e `dotnet build` em Release, com a versão `1.0.<número do run>`
+   gravada nas DLLs — é como se confere, no destino, qual build está no ar.
+2. `dotnet test` dos dois projetos, gerando `.trx`. O resultado aparece como um
+   *check* no commit (relatório de testes) e os arquivos brutos ficam no artefato
+   `test-results`. Se um teste falha, o workflow falha: a imagem não é gerada e
+   **o CD não roda**.
+
+**Job `build-image`** (só depois do anterior passar)
+
+3. `docker build` pelo [`Dockerfile`](Dockerfile), passando a versão e o SHA do
+   commit como *build args*; o `dotnet publish` acontece dentro do estágio de
+   build da imagem.
+4. Push para o GHCR com três tags: `1.0.<run>` (a que o CD usa), `sha-<commit>` e
+   `latest` (só na `main`). Em pull request a imagem é construída, mas não
+   publicada — serve para provar que o Dockerfile continua válido.
+
+### O workflow de CD — [`.github/workflows/cd.yml`](.github/workflows/cd.yml)
+
+Dispara por `workflow_run`: quando o CI **termina com sucesso na `main`**. Um CI
+vermelho ou um CI de pull request não publica nada. Roda no runner self-hosted
+(`runs-on: [self-hosted, Windows]`), dentro do *environment* `production`, e:
+
+1. Valida que o secret `PROD_JWT_SECRET` existe e tem ao menos 32 caracteres —
+   antes de derrubar qualquer coisa.
+2. Faz login no GHCR com o `GITHUB_TOKEN` e baixa **a imagem do run de CI que o
+   disparou** (`1.0.<run>`), e não "a última", para não publicar um build
+   diferente do que foi testado.
+3. `docker compose up -d --no-build` com `API_IMAGE` apontando para essa tag.
+   O compose troca o container da API pelo novo; o SQL Server e o volume de dados
+   continuam onde estão. Na primeira subida a API cria o banco e aplica as
+   migrations.
+4. Executa [`deploy/Smoke-Test.ps1`](deploy/Smoke-Test.ps1): espera `GET /health`
+   responder 200 (até 2 minutos, por causa do SQL Server e das migrations) e
+   imprime o corpo. Se não responder, mostra os logs do container e marca o deploy
+   como falho.
+
+Os segredos **não ficam no repositório nem na imagem**: entram pelo
+*Settings → Secrets and variables → Actions* e chegam ao container como variáveis
+de ambiente, pelo compose.
+
+| Secret | Obrigatório | Para que serve |
+|--------|-------------|----------------|
+| `PROD_JWT_SECRET` | sim | `Jwt:Secret` de produção, com pelo menos 32 caracteres. O deploy falha sem ele, de propósito: é a chave que assina os tokens |
+| `PROD_MSSQL_PASSWORD` | não | Senha do `sa` do SQL Server em container. Sem ele, usa a de desenvolvimento do compose |
+
+### Preparando a máquina (uma vez só)
+
+1. **Docker Desktop** instalado e rodando (é ele que executa a API e o banco).
+2. **Runner self-hosted.** No GitHub: *Settings → Actions → Runners → New
+   self-hosted runner → Windows*, e seguir os comandos que a página mostra
+   (download, `config.cmd` com o token). O runner precisa ter o label `Windows`
+   (vem por padrão no runner Windows); é o que o `runs-on` do CD procura. Para o
+   vídeo basta `.\run.cmd` em um terminal comum; para deixar permanente,
+   `config.cmd --runasservice`. O usuário do runner precisa conseguir chamar o
+   `docker` (estar no grupo `docker-users`). Não precisa de administrador.
+3. Cadastrar o secret `PROD_JWT_SECRET` no repositório. Um jeito rápido de gerar:
+
+   ```powershell
+   -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 48 | % {[char]$_})
+   ```
+
+   Ou pela CLI: `gh secret set PROD_JWT_SECRET`.
+4. Na primeira execução do CI, o pacote `portfolio-api` aparece em *Packages* do
+   perfil. Ele já nasce vinculado ao repositório (label
+   `org.opencontainers.image.source`), então o `GITHUB_TOKEN` do CD consegue
+   baixá-lo sem configuração extra.
+
+Depois disso, qualquer push na `main` percorre a esteira inteira e termina com a
+API nova respondendo em http://localhost:5080/swagger.
+
+### Roteiro do vídeo da Fase 2
+
+1. **Mostrar os dois workflows** no repositório e explicar o gatilho de cada um:
+   `push`/`pull_request` no CI, `workflow_run` do CI no CD. Mostrar o
+   `Dockerfile` e o serviço `api` do `docker-compose.yml`.
+2. **Mostrar o runner** on-line em *Settings → Actions → Runners* e o estado atual
+   da produção: `docker compose ps` e o `/health` respondendo. Anotar a imagem que
+   está no ar: `docker inspect portfolio-api --format '{{.Config.Image}}'`.
+3. **Fazer uma mudança visível** — por exemplo, trocar o `DocumentTitle` do
+   Swagger no `Program.cs` — e dar push na `main`.
+4. **Acompanhar o CI** na aba *Actions*: compilação, os 97 testes passando no
+   relatório, a imagem publicada com a tag `1.0.<run>` no resumo do job.
+5. **Mostrar o CD disparando sozinho** assim que o CI fica verde: o `docker pull`
+   da tag exata, o `docker compose up`, o smoke test com o `/health` em 200.
+6. **Abrir http://localhost:5080/swagger** e mostrar a mudança no ar; repetir o
+   `docker inspect` e mostrar a tag nova.
+7. **Mostrar que o CD é condicionado ao CI**: abrir um pull request com um teste
+   quebrado (ou um commit que não compila) e mostrar o CI vermelho, sem imagem
+   publicada e sem CD.
+
+---
+
 ## Roteiro do vídeo de demonstração
 
 Os números são os passos do arquivo
@@ -808,3 +955,4 @@ No container, `docker compose down -v` remove o volume junto.
 | Análise de projetos com DDD | Entidades que protegem as próprias invariantes, interfaces de repositório no domínio, `IUnitOfWork` e separação em camadas |
 | Qualidade de software e pirâmide de testes | 59 testes de unidade e 35 de integração, em projetos separados |
 | Segurança | BCrypt work factor 12, e-mail normalizado, mensagem de login uniforme, 404 em vez de 403, filtro por investidor em toda consulta, limite de tentativas em `/auth`, detalhe de erro interno fora da resposta |
+| CI/CD (Fase 2) | `.github/workflows/ci.yml` (build, testes, imagem Docker no GHCR) e `cd.yml` (deploy via `docker compose` após o CI, por `workflow_run`); `Dockerfile`, `docker-compose.yml` e `deploy/Smoke-Test.ps1` |

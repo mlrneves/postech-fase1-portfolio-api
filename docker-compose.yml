@@ -1,27 +1,54 @@
-# SQL Server em container, para quem nao usa o LocalDB do Windows.
-# Depois de "docker compose up -d", aponte a API para ele exportando:
-#   ConnectionStrings__DefaultConnection="Server=localhost,1433;Database=PortfolioDb;User Id=sa;Password=Portfolio@2026;TrustServerCertificate=True"
+# API + SQL Server em containers.
+#
+# Desenvolvimento (constroi a imagem localmente):
+#   docker compose up -d --build
+#
+# Producao na maquina (imagem gerada pelo CI, publicada no GHCR):
+#   API_IMAGE=ghcr.io/mlrneves/portfolio-api:1.0.42 docker compose up -d --no-build
+#
+# Variaveis de ambiente (ou arquivo .env ao lado deste):
+#   API_IMAGE          imagem da API; padrao ghcr.io/mlrneves/portfolio-api:latest
+#   API_PORT           porta no host; padrao 5080
+#   JWT_SECRET         chave de assinatura dos tokens (>= 32 caracteres)
+#   MSSQL_SA_PASSWORD  senha do sa do SQL Server; padrao de desenvolvimento abaixo
 
 services:
+  api:
+    image: ${API_IMAGE:-ghcr.io/mlrneves/portfolio-api:latest}
+    build: .
+    container_name: portfolio-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=PortfolioDb;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Portfolio@2026};TrustServerCertificate=True;MultipleActiveResultSets=true"
+      Jwt__Secret: ${JWT_SECRET:-chave-de-desenvolvimento-troque-em-producao-32-chars}
+      Database__AutoMigrate: "true"
+    ports:
+      - "${API_PORT:-5080}:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: unless-stopped
+
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: portfolio-sqlserver
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "Portfolio@2026"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-Portfolio@2026}
       MSSQL_PID: "Developer"
     ports:
       - "1433:1433"
     volumes:
       - portfolio-sqldata:/var/opt/mssql
     healthcheck:
-      # A API sobe e aplica as migrations sozinha; o healthcheck evita que ela
-      # tente conectar antes de o SQL Server aceitar login.
+      # A API sobe e aplica as migrations sozinha; o healthcheck segura o start dela
+      # ate o SQL Server aceitar login.
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
+    restart: unless-stopped
 
 volumes:
   portfolio-sqldata:

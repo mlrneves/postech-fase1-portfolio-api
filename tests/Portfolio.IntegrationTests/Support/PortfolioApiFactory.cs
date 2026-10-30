@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -40,6 +41,9 @@ public class PortfolioApiFactory : WebApplicationFactory<ApiMarker>
         {
             services.RemoveAll<DbContextOptions<PortfolioDbContext>>();
             services.RemoveAll<DbContextOptions>();
+            // Desde o EF Core 9 o AddDbContext guarda a configuracao (o UseSqlServer da
+            // API) aqui; sem remover, os dois provedores ficariam registrados juntos.
+            services.RemoveAll<IDbContextOptionsConfiguration<PortfolioDbContext>>();
 
             services.AddDbContext<PortfolioDbContext>(options => options
                 .UseInMemoryDatabase(_databaseName)

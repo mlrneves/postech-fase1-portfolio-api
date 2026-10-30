@@ -1,0 +1,90 @@
+# Entrega continua: publica a imagem gerada pelo CI no Docker da maquina local,
+# por um runner self-hosted, assim que o workflow de CI termina com sucesso na main.
+#
+# Pre-requisitos na maquina (uma vez so): Docker Desktop rodando e o runner
+# self-hosted registrado no repositorio (ver README, secao "CI/CD").
+#
+# Secrets do repositorio usados aqui:
+#   PROD_JWT_SECRET       obrigatorio, chave HMAC com pelo menos 32 caracteres
+#   PROD_MSSQL_PASSWORD   opcional; senha do sa do SQL Server em container
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/portfolio-api
+  # Mesma formula do CI: a imagem deste deploy e a do run que o disparou.
+  APP_VERSION: 1.0.${{ github.event.workflow_run.run_number }}
+  API_PORT: 5080
+
+jobs:
+  deploy:
+    name: Deploy em producao (Docker local)
+    # Um CI que falhou nao gera deploy.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, Windows]
+    environment:
+      name: production
+      url: http://localhost:5080/swagger
+    permissions:
+      contents: read
+      packages: read # para baixar a imagem do GHCR
+
+    steps:
+      - name: Checkout (compose e scripts)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Validar segredos
+        shell: pwsh
+        env:
+          PROD_JWT_SECRET: ${{ secrets.PROD_JWT_SECRET }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PROD_JWT_SECRET) -or $env:PROD_JWT_SECRET.Length -lt 32) {
+            throw 'Secret PROD_JWT_SECRET ausente ou com menos de 32 caracteres. Cadastre em Settings > Secrets do repositorio.'
+          }
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Baixar a imagem do CI
+        shell: pwsh
+        run: docker pull "${env:IMAGE_NAME}:${env:APP_VERSION}"
+
+      - name: Subir API + SQL Server
+        shell: pwsh
+        env:
+          API_IMAGE: ${{ env.IMAGE_NAME }}:${{ env.APP_VERSION }}
+          JWT_SECRET: ${{ secrets.PROD_JWT_SECRET }}
+          MSSQL_SA_PASSWORD: ${{ secrets.PROD_MSSQL_PASSWORD || 'Portfolio@2026' }}
+        # --no-build: a imagem vem do registro, nunca e construida no runner.
+        run: |
+          docker compose up -d --no-build --remove-orphans
+          docker compose ps
+
+      - name: Smoke test
+        shell: pwsh
+        run: ./deploy/Smoke-Test.ps1 -BaseUrl "http://localhost:${env:API_PORT}"
+
+      - name: Limpar imagens antigas
+        shell: pwsh
+        continue-on-error: true
+        run: docker image prune -f --filter "label=org.opencontainers.image.source=https://github.com/${{ github.repository }}"
+
+      - name: Resumo
+        shell: pwsh
+        run: |
+          "### Deploy concluido" >> $env:GITHUB_STEP_SUMMARY
+          "- Imagem: ``${env:IMAGE_NAME}:${env:APP_VERSION}``" >> $env:GITHUB_STEP_SUMMARY
+          "- Commit: ``${{ github.event.workflow_run.head_sha }}``" >> $env:GITHUB_STEP_SUMMARY
+          "- CI: run #${{ github.event.workflow_run.run_number }}" >> $env:GITHUB_STEP_SUMMARY
+          "- URL: http://localhost:${env:API_PORT}/swagger" >> $env:GITHUB_STEP_SUMMARY

@@ -1,4 +1,4 @@
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 
 namespace Portfolio.WebApi.Setup;
 
@@ -31,12 +31,10 @@ public static class SwaggerSetup
                 Description = "Cole aqui apenas o token devolvido por POST /auth, sem o prefixo 'Bearer'."
             });
 
-            options.AddSecurityRequirement(new OpenApiSecurityRequirement
+            // Microsoft.OpenApi 2.x: a referencia ao esquema e um tipo proprio, nao mais um OpenApiReference.
+            options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
             {
-                [new OpenApiSecurityScheme
-                {
-                    Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = BearerScheme }
-                }] = []
+                [new OpenApiSecuritySchemeReference(BearerScheme, document)] = []
             });
 
             // Traz as descricoes dos comentarios /// dos controllers e dos contratos.
