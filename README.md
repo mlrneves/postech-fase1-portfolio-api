@@ -815,6 +815,9 @@ API nova respondendo em http://localhost:5080/swagger.
 
 ### Roteiro do vídeo da Fase 2
 
+Os slides da apresentação estão em [`docs/apresentacao-fase2.html`](docs/apresentacao-fase2.html):
+abra o arquivo no navegador, `F` para tela cheia, setas para navegar.
+
 1. **Mostrar os dois workflows** no repositório e explicar o gatilho de cada um:
    `push`/`pull_request` no CI, `workflow_run` do CI no CD. Mostrar o
    `Dockerfile` e o serviço `api` do `docker-compose.yml`.
