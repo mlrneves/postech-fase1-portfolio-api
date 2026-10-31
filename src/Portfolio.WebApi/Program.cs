@@ -39,8 +39,8 @@ app.UseExceptionHandler();
 app.UseSwagger();
 app.UseSwaggerUI(ui =>
 {
-    ui.SwaggerEndpoint("/swagger/v1/swagger.json", "Portfolio API v1");
-    ui.DocumentTitle = "Portfolio API v1";
+    ui.SwaggerEndpoint("/swagger/v1/swagger.json", "Portfolio API v1 Fase 2 CI/CD");
+    ui.DocumentTitle = "Portfolio API Fase 2 CI/CD";
 });
 
 app.UseAuthentication();
