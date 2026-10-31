@@ -40,7 +40,7 @@ app.UseSwagger();
 app.UseSwaggerUI(ui =>
 {
     ui.SwaggerEndpoint("/swagger/v1/swagger.json", "Portfolio API v1");
-    ui.DocumentTitle = "Portfolio API teste";
+    ui.DocumentTitle = "Portfolio API v1";
 });
 
 app.UseAuthentication();
